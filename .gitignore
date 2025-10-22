@@ -1,0 +1,41 @@
+# Python environment
+venv/
+
+# Python cache
+__pycache__/
+
+# Environment variables
+.env
+
+# OS files (Windows)
+Thumbs.db
+.DS_Store
+
+# FFmpeg
+ffmpeg.exe
+ffplay.exe
+ffprobe.exe
+
+# Database
+*.db
+*.sqlite3
+
+# Audio files
+uploads/
+*.wav
+*.mp3
+
+# Ignore temp and cache files
+tmp/
+*.dat
+*.log
+*.ldb
+*.sqlite
+Cookies
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Ignore system/browser data
+EBWebView/
+Crashpad/
