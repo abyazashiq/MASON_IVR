@@ -24,4 +24,23 @@ It integrates audio processing, AI transcription, and backend data management us
 ---
 
 ## Project Structure
-
+MASON_IVR/
+├── backend/
+│   ├── __pycache__/
+│   ├── tester/
+│   ├── __init__.py
+│   ├── app.py
+│   ├── database.py
+│   ├── ivr_handler.py
+│   └── transcribe_module.py
+├── data/
+├── frontend/
+├── model/
+├── tmp/
+├── uploads/
+├── venv/
+├── .env
+├── .gitignore
+├── masons.db
+├── README.md
+└── requirements.txt
