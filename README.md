@@ -24,6 +24,7 @@ It integrates audio processing, AI transcription, and backend data management us
 ---
 
 ## Project Structure
+```bash
 MASON_IVR/
 ├── backend/
 │   ├── __pycache__/
@@ -44,3 +45,4 @@ MASON_IVR/
 ├── masons.db
 ├── README.md
 └── requirements.txt
+```
