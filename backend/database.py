@@ -1,19 +1,27 @@
+# supabase_db.py
 from supabase import create_client
 import os
 from dotenv import load_dotenv
 
-# Load credentials from .env
-load_dotenv()
+# Load environment variables from .env
+from dotenv import load_dotenv
+import os
+
+load_dotenv(dotenv_path="D:\Link_from_C\Mason_IVR\.env")
+
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY")
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+# Initialize Supabase client once (write-only)
+supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
-# Example: insert a new call
-def insert_call(user_id, name, number, address, pay, contact_status, transcription):
+def insert_call(name, number, address, pay, contact_status, transcription):
+    """
+    Inserts a new call record into the 'calls' table.
+    Write-only: No retrieval of data is allowed here.
+    """
     data = {
-        "user_id": user_id,
         "name": name,
         "number": number,
         "address": address,
@@ -22,15 +30,4 @@ def insert_call(user_id, name, number, address, pay, contact_status, transcripti
         "transcription": transcription
     }
     response = supabase.table("calls").insert(data).execute()
-    print(response.data)
-
-# Example: fetch calls for logged-in user
-def get_calls(user_id):
-    response = supabase.table("calls").select("*").eq("user_id", user_id).execute()
-    return response.data
-
-# Usage example
-if __name__ == "__main__":
-    user_id = "put-user-uuid-here"  # Supabase auth user ID
-    insert_call(user_id, "John Doe", "9999999999", "123 Street", 1000, "Pending", "Hello world transcription")
-    print(get_calls(user_id))
+    return response.data  # Returns success info, but not the full table
