@@ -73,7 +73,7 @@ def extract_contact_status(text: str):
     return "unknown"
 
 
-def parse_transcription(text: str):
+def extract_fields(text: str):
     return {
         "name": extract_name(text),
         "place": extract_place(text),

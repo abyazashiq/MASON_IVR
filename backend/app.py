@@ -3,9 +3,10 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import os
 
-from transcribe_module import transcribe_audio
-from data_handler import extract_fields
-from database import insert_record
+from backend.data_handler import extract_fields
+from backend.transcribe_module import transcribe_audio
+from backend.database import insert_record
+
 
 app = FastAPI()
 
