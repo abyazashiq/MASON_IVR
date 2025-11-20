@@ -1,12 +1,22 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 import os
 
-from backend.transcribe_module import transcribe_audio
-from backend.data_handler import extract_fields
-from backend.database import insert_record
+from transcribe_module import transcribe_audio
+from data_handler import extract_fields
+from database import insert_record
 
 app = FastAPI()
+
+# Allow frontend (Next.js) to access API
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -22,10 +32,10 @@ async def process_audio(file: UploadFile = File(...)):
         # 2. Transcribe
         text = transcribe_audio(file_path)
 
-        # 3. Extract structured fields
+        # 3. Extract fields
         data = extract_fields(text)
 
-        # 4. Insert into database
+        # 4. Store in DB
         insert_record(
             name=data["name"],
             address=data["address"],
@@ -34,10 +44,10 @@ async def process_audio(file: UploadFile = File(...)):
             status="pending"
         )
 
-        # 5. Cleanup
+        # 5. Cleanup temp file
         os.remove(file_path)
 
-        # 6. Return result
+        # 6. Final response
         return {
             "message": "Data stored successfully",
             "transcription": text,
