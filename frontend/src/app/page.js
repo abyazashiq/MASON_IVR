@@ -37,7 +37,7 @@ export default function Home() {
   const sendAudioToBackend = async () => {
     const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
     const formData = new FormData();
-    formData.append("audio", audioBlob, "audio.webm");
+    formData.append("file", audioBlob,"audio.wav");
 
     const res = await fetch("http://127.0.0.1:8000/transcribe", {
       method: "POST",

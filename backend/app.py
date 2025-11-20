@@ -1,62 +1,77 @@
 from fastapi import FastAPI, UploadFile, File
-from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
 import os
+import tempfile
 
-from backend.data_handler import extract_fields
 from backend.transcribe_module import transcribe_audio
+from backend.data_handler import extract_fields
 from backend.database import insert_record
-
 
 app = FastAPI()
 
-# Allow frontend (Next.js) to access API
+# Allow frontend localhost
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # You can restrict later
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-UPLOAD_DIR = "uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
-@app.post("/process_audio")
-async def process_audio(file: UploadFile = File(...)):
+@app.post("/transcribe")
+async def transcribe_endpoint(file: UploadFile = File(...)):
     try:
-        # 1. Save file
-        file_path = os.path.join(UPLOAD_DIR, file.filename)
-        with open(file_path, "wb") as f:
-            f.write(await file.read())
+        # -------------------------------
+        # Save uploaded file temporarily
+        # -------------------------------
+        suffix = os.path.splitext(file.filename)[-1] or ".webm"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(await file.read())
+            temp_path = tmp.name
 
-        # 2. Transcribe
-        text = transcribe_audio(file_path)
+        # -------------------------------
+        # Run Whisper transcription
+        # -------------------------------
+        text = transcribe_audio(temp_path)
 
-        # 3. Extract fields
-        data = extract_fields(text)
+        # -------------------------------
+        # Extract structured fields
+        # -------------------------------
+        extracted = extract_fields(text)
 
-        # 4. Store in DB
+        name = extracted.get("name")
+        number = extracted.get("contact_number")
+        address = extracted.get("place")
+        pay = extracted.get("wages")
+        contact_status = extracted.get("contact_status")
+
+        # -------------------------------
+        # Insert into Supabase
+        # -------------------------------
         insert_record(
-            name=data["name"],
-            address=data["address"],
-            wages=data["wages"],
-            phone=data["phone"],
-            status="pending"
+            name=name,
+            number=number,
+            address=address,
+            pay=pay,
+            contact_status=contact_status,
+            transcription=text
         )
 
-        # 5. Cleanup temp file
-        os.remove(file_path)
-
-        # 6. Final response
+        # -------------------------------
+        # Return response
+        # -------------------------------
         return {
-            "message": "Data stored successfully",
+            "status": "success",
             "transcription": text,
-            "parsed_data": data
+            "extracted": extracted
         }
 
     except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e)}
-        )
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="127.0.0.1", port=8000)
