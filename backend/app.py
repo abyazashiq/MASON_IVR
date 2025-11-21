@@ -1,77 +1,69 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 import uvicorn
 import os
 import tempfile
 
 from backend.transcribe_module import transcribe_audio
-from backend.data_handler import extract_fields
-from backend.database import insert_record
+from backend.ivr_handler import process_turn, reset_session
 
 app = FastAPI()
 
-# Allow frontend localhost
+# CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # You can restrict later
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-@app.post("/transcribe")
-async def transcribe_endpoint(file: UploadFile = File(...)):
+BACKEND_URL = "http://127.0.0.1:8000"
+
+# ------------------------- IVR -------------------------
+@app.post("/ivr")
+async def ivr_endpoint(session_id: str = Form(...), file: UploadFile = File(...)):
     try:
-        # -------------------------------
-        # Save uploaded file temporarily
-        # -------------------------------
         suffix = os.path.splitext(file.filename)[-1] or ".webm"
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(await file.read())
-            temp_path = tmp.name
+            temp_audio_path = tmp.name
 
-        # -------------------------------
-        # Run Whisper transcription
-        # -------------------------------
-        text = transcribe_audio(temp_path)
+        print(f"[IVR] Received recording for session: {session_id}")
+        print(f"[IVR] Saved audio temporarily at: {temp_audio_path}")
 
-        # -------------------------------
-        # Extract structured fields
-        # -------------------------------
-        extracted = extract_fields(text)
+        # Transcribe audio
+        user_text = transcribe_audio(temp_audio_path)
+        print(f"[IVR] Transcribed text: '{user_text}'")
 
-        name = extracted.get("name")
-        number = extracted.get("contact_number")
-        address = extracted.get("place")
-        pay = extracted.get("wages")
-        contact_status = extracted.get("contact_status")
+        # Process turn
+        result = process_turn(session_id, user_text)
 
-        # -------------------------------
-        # Insert into Supabase
-        # -------------------------------
-        insert_record(
-            name=name,
-            number=number,
-            address=address,
-            pay=pay,
-            contact_status=contact_status,
-            transcription=text
-        )
-
-        # -------------------------------
-        # Return response
-        # -------------------------------
         return {
             "status": "success",
-            "transcription": text,
-            "extracted": extracted
+            "assistant_text": result["assistant_text"],
+            "finished": result["finished"],
+            "fields": result["fields"],
+            "audio_url": f"/audio/{os.path.basename(result['audio_file'])}"
         }
 
     except Exception as e:
-        return {
-            "status": "error",
-            "message": str(e)
-        }
+        print(f"[IVR] Error: {e}")
+        return {"status": "error", "message": str(e)}
 
+# ------------------------- Serve audio -------------------------
+@app.get("/audio/{file_name}")
+async def get_audio(file_name: str):
+    file_path = os.path.join(tempfile.gettempdir(), file_name)
+    return FileResponse(file_path, media_type="audio/mpeg")
+
+# ------------------------- Reset -------------------------
+@app.post("/reset")
+async def reset(session_id: str = Form(...)):
+    reset_session(session_id)
+    return {"status": "reset"}
+
+# ------------------------- Run server -------------------------
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)
