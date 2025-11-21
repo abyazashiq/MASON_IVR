@@ -14,34 +14,36 @@ export default function Home() {
 
   const BACKEND_URL = "http://127.0.0.1:8000";
 
-  // ----------------------------------------
-  // Start IVR Button
-  // ----------------------------------------
+  // ----------------------------------------------------------
+  // Start IVR
+  // ----------------------------------------------------------
   const handleStart = async () => {
     const sid = crypto.randomUUID();
     setSessionId(sid);
 
-    // Reset backend session
+    // Reset backend
     const formData = new FormData();
     formData.append("session_id", sid);
-    await fetch(`${BACKEND_URL}/reset`, {
-      method: "POST",
-      body: formData,
-    });
+    await fetch(`${BACKEND_URL}/reset`, { method: "POST", body: formData });
 
-    // Play intro through backend TTS
     setStarted(true);
-
     setAssistantText("Starting IVR... Please speak after the tone.");
+
     setTimeout(() => {
       startRecording();
-    }, 2000);
+    }, 1500);
   };
 
-  // ----------------------------------------
+  // ----------------------------------------------------------
   // Start Recording
-  // ----------------------------------------
+  // ----------------------------------------------------------
   const startRecording = async () => {
+    if (finished) {
+      console.log("Session finished — refusing to record.");
+      return;
+    }
+
+    console.log("Recording started");
     setRecording(true);
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
@@ -52,25 +54,35 @@ export default function Home() {
     };
 
     mediaRecorderRef.current.onstop = () => {
-      sendAudioToBackend();
+      if (!finished) {
+        sendAudioToBackend();
+      }
     };
 
     audioChunksRef.current = [];
     mediaRecorderRef.current.start();
   };
 
-  // ----------------------------------------
+  // ----------------------------------------------------------
   // Stop Recording
-  // ----------------------------------------
+  // ----------------------------------------------------------
   const stopRecording = () => {
+    console.log("Recording stopped");
     setRecording(false);
-    mediaRecorderRef.current.stop();
+    if (mediaRecorderRef.current) {
+      mediaRecorderRef.current.stop();
+    }
   };
 
-  // ----------------------------------------
-  // Send audio to IVR backend
-  // ----------------------------------------
+  // ----------------------------------------------------------
+  // Send Audio → Backend
+  // ----------------------------------------------------------
   const sendAudioToBackend = async () => {
+    if (finished) {
+      console.log("Session finished — backend will not be called again.");
+      return;
+    }
+
     const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
     const formData = new FormData();
     formData.append("session_id", sessionId);
@@ -88,20 +100,26 @@ export default function Home() {
     setFields(json.fields);
     setFinished(json.finished);
 
-    // Play returned audio
+    // Play TTS
     if (json.audio_url) {
       const audio = new Audio(`${BACKEND_URL}${json.audio_url}`);
       audio.play();
     }
 
-    if (!json.finished) {
-      // Continue listening
+    // ONLY restart recording if NOT finished
+    if (json.finished === false) {
       setTimeout(() => {
         startRecording();
-      }, 2000);
+      }, 1500);
+    } else {
+      console.log("IVR finished — stopping completely.");
+      setRecording(false);
     }
   };
 
+  // ----------------------------------------------------------
+  // UI
+  // ----------------------------------------------------------
   return (
     <div style={{ padding: 20 }}>
       <h1>Mason IVR App</h1>
@@ -119,6 +137,7 @@ export default function Home() {
         <>
           <p><b>IVR:</b> {assistantText}</p>
 
+          {/* Speak/Stop button should disappear after finish */}
           {!finished && (
             <button
               onClick={recording ? stopRecording : startRecording}
