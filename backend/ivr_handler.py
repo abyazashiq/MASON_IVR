@@ -10,13 +10,14 @@ from backend.database import insert_record
 SESSIONS = {}
 
 # Fields you want to collect
-FIELDS = ["name", "number", "address", "pay"]
+FIELDS = ["name", "age","number", "address", "pay"]
 
 QUESTIONS = {
     "name": "Please tell me your full name.",
     "number": "Please tell me your 10-digit phone number.",
     "address": "Please tell me your full address.",
-    "pay": "What is your monthly salary or pay?"
+    "pay": "What is your monthly salary or pay?",
+    "age": "Please tell me your age."
 }
 
 
@@ -98,7 +99,7 @@ def process_turn(session_id: str, user_text: str):
         if current_field == "number":
             digits = re.sub(r"\D", "", user_text)
             if len(digits) < 10:
-                assistant_text = "I couldn't understand. Please repeat your 10-digit phone number."
+                assistant_text = "Please repeat your 10-digit phone number."
                 audio_file = synthesize_speech(assistant_text)
                 return {
                     "assistant_text": assistant_text,
@@ -107,6 +108,33 @@ def process_turn(session_id: str, user_text: str):
                     "audio_file": audio_file
                 }
             session["number"] = digits
+        # Special processing for age
+        if current_field == "age":
+            digits = re.sub(r"\D", "", user_text)
+            if not digits or not (18 < int(digits) < 120):
+                assistant_text = "I couldn't understand. Please tell me your age as a number."
+                audio_file = synthesize_speech(assistant_text)
+                return {
+                    "assistant_text": assistant_text,
+                    "finished": False,
+                    "fields": {f: session.get(f) for f in FIELDS},
+                    "audio_file": audio_file
+                }
+            session["age"] = digits
+        # specail processing for pay
+        elif current_field == "pay":
+            digits = re.sub(r"\D", "", user_text)
+            if not digits:
+                assistant_text = "I couldn't understand. Please tell me your pay as a number."
+                audio_file = synthesize_speech(assistant_text)
+                return {
+                    "assistant_text": assistant_text,
+                    "finished": False,
+                    "fields": {f: session.get(f) for f in FIELDS},
+                    "audio_file": audio_file
+                }
+            session["pay"] = digits
+
 
         else:
             session[current_field] = user_text.strip()

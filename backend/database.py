@@ -16,7 +16,7 @@ SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY")
 # Initialize Supabase client once (write-only)
 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
-def insert_record(name=None, number=None, address=None, pay=None, contact_status=None, transcription=None):
+def insert_record(name=None, number=None, address=None, pay=None,age=None, contact_status=None, transcription=None):
     """
     Inserts a new call record into the 'calls' table.
     Write-only: No retrieval of data is allowed here.
@@ -27,7 +27,8 @@ def insert_record(name=None, number=None, address=None, pay=None, contact_status
         "address": address,
         "pay": pay,
         "contact_status": contact_status,
-        "transcription": transcription
+        "transcription": transcription,
+        "age":age
     }
     response = supabase.table("calls").insert(data).execute()
     return response.data  # Returns success info, but not the full table
