@@ -1,0 +1,89 @@
+import os
+import tempfile
+from gtts import gTTS
+import openai
+import json
+
+# --- CONFIG ---
+# Make sure your OPENAI_API_KEY is set in your environment
+# os.environ["OPENAI_API_KEY"] = "your_api_key_here"
+
+SESSIONS = {}
+
+FIELDS = ["name", "age", "number", "address", "pay"]
+
+def synthesize_speech(text: str) -> str:
+    """Generate TTS audio from text and return file path."""
+    tts = gTTS(text=text, lang="en")
+    tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+    tts.save(tmp_file.name)
+    return tmp_file.name
+
+def start_session(session_id: str):
+    SESSIONS[session_id] = {
+        "history": [],
+        "fields": {f: None for f in FIELDS}
+    }
+
+def reset_session(session_id: str):
+    if session_id in SESSIONS:
+        del SESSIONS[session_id]
+
+def process_turn(session_id: str, user_text: str):
+    if session_id not in SESSIONS:
+        start_session(session_id)
+
+    session = SESSIONS[session_id]
+
+    # Append user input to history
+    session["history"].append({"role": "user", "content": user_text})
+
+    # --- AI Prompt ---
+    prompt_system = """
+You are a friendly recruitment assistant. Your goal is to collect the following info step by step: 
+name, age, phone number, address, and expected pay. 
+Respond naturally. Only ask for missing fields.
+If all fields are collected, return a JSON object with the fields and a short thank you message. 
+Do not ask for already collected fields.
+"""
+    # Prepare conversation messages
+    messages = [{"role": "system", "content": prompt_system}] + session["history"]
+
+    # --- Call OpenAI ---
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=messages,
+            temperature=0.3
+        )
+        assistant_text = response.choices[0].message["content"].strip()
+    except Exception as e:
+        print(f"[OpenAI Error] {e}")
+        assistant_text = "Sorry, I had trouble processing that. Could you repeat?"
+
+    # --- Detect JSON completion ---
+    finished = False
+    extracted_data = {}
+    try:
+        # Look for a JSON object in AI reply
+        start = assistant_text.find("{")
+        end = assistant_text.rfind("}") + 1
+        if start != -1 and end != -1:
+            extracted_data = json.loads(assistant_text[start:end])
+            finished = True
+            assistant_text = assistant_text[:start].strip()  # Remove JSON from TTS
+            reset_session(session_id)
+    except Exception:
+        pass  # Not JSON, continue conversation
+
+    # Append assistant reply to history
+    session["history"].append({"role": "assistant", "content": assistant_text})
+
+    audio_file = synthesize_speech(assistant_text)
+
+    return {
+        "assistant_text": assistant_text,
+        "finished": finished,
+        "fields": extracted_data if finished else session["fields"],
+        "audio_file": audio_file
+    }

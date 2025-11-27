@@ -137,6 +137,15 @@ def get_employer_profile(emp_id: str):
     if not employer:
         return {"name": "", "email": ""}
     return {"name": employer["name"], "email": employer["email"]}
+from fastapi import FastAPI
+
+
+
+@app.post("/ivr/save")
+async def save(data: dict):
+    print("Received:", data)
+    return {"ok": True}
+
 
 # ------------------------- Run Server -------------------------
 if __name__ == "__main__":
