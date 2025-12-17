@@ -1,116 +1,121 @@
-# supabase_db.py
-from supabase import create_client
-import os
-from dotenv import load_dotenv
+"""
+data_handler.py — Handles extraction and storage of IVR transcription data into PostgreSQL.
 
-# Load environment variables from .env
-from dotenv import load_dotenv
-import os
+Table schema:
+    id SERIAL PRIMARY KEY
+    name TEXT
+    address TEXT
+    pay TEXT
+    number TEXT
+    contact_status TEXT
+"""
 
-import bcrypt
-import uuid
+import re
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 
-load_dotenv(dotenv_path="D:\Link_from_C\Mason_IVR\.env")
-
-
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY")
-
-# Initialize Supabase client once (write-only)
-supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-
-def insert_record(name=None, number=None, address=None, pay=None,age=None, contact_status="Pending", transcription=None):
+# ===============================================================
+# 1. DATABASE CONNECTION
+# ===============================================================
+def get_connection():
     """
-    Inserts a new call record into the 'calls' table.
-    Write-only: No retrieval of data is allowed here.
+    Returns a connection to the PostgreSQL database.
+    Update credentials according to your environment.
     """
-    data = {
-        "name": name,
-        "number": number,
-        "address": address,
-        "pay": pay,
-        "contact_status": contact_status,
-        "transcription": transcription,
-        "age":age
-    }
-    response = supabase.table("calls").insert(data).execute()
-    return response.data  # Returns success info, but not the full table
+    return psycopg2.connect(
+        host="localhost",          # e.g., 'db.neon.tech' if remote
+        database="mason_ivr",
+        user="postgres",
+        password="yourpassword",
+        cursor_factory=RealDictCursor
+    )
 
 
-def checklogin(email, password):
-    response = supabase.table("employers").select("*").eq("email", email).execute()
-    if response.data:
-        
-        user = response.data[0]
-        if bcrypt.checkpw(password.encode('utf-8'), user['password'].encode('utf-8')):
-            return user
-        
-    return None
-
-def add_employer_login( email, password):
-    hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-    emp_id= str(uuid.uuid4())
-    data = {
-        
-        "email": email,
-        "password": hashed_password,
-        "emp_id": emp_id
-    }
-    response = supabase.table("employers").insert(data).execute()
-    return (response.data,emp_id)
-
-def add_employer_profile(emp_id, name, location, expected_wage):
-    data = {
-        "emp_id": emp_id,
-        "location": location,
-        "expected_wage": expected_wage, 
-        "name": name,
-        
-    }
-    response = supabase.table("employer_profiles").insert(data).execute()
-    return response.data
-
-def get_employer_by_id(emp_id):
-    # Fetch profile from employer_profiles
-    profile_res = supabase.table("employer_profiles").select("*").eq("emp_id", emp_id).execute()
-    profile = profile_res.data[0] if profile_res.data else None
-
-    # Fetch email from employer table
-    employer_res = supabase.table("employers").select("email").eq("emp_id", emp_id).execute()
-    employer = employer_res.data[0] if employer_res.data else None
-
-    if not profile and not employer:
-        return None
-
-    return {
-        "name": profile.get("name", "Unknown") if profile else "Unknown",
-        "email": employer.get("email", "Unknown") if employer else "Unknown"
-    }
-
-def get_masons():
-    response = supabase.table("calls").select("*").execute()
-    # response.data will either be a list of rows or None
-    if response.data is None:
-        return []
-    return response.data
+# ===============================================================
+# 2. INITIALIZE TABLE
+# ===============================================================
+def init_db():
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS call_data (
+        id SERIAL PRIMARY KEY,
+        name TEXT,
+        address TEXT,
+        pay TEXT,
+        number TEXT,
+        contact_status TEXT
+    )
+    """)
+    conn.commit()
+    cur.close()
+    conn.close()
 
 
-def update_contact_status(mason_id: int, new_status: str):
+# ===============================================================
+# 3. PARSE TRANSCRIPTION TEXT
+# ===============================================================
+def parse_transcription(text: str):
     """
-    Update the contact_status column for a row with id = mason_id.
-    Returns a dict with updated flag so frontend can use data.updated.
+    Extracts name, address, and pay fields from raw transcription text.
+    Example input:
+        "My name is John Doe. I live at 24 Palm Street, Chennai. My pay is 45000."
     """
-    try:
-        # Make sure column name is exactly what you have in Supabase (contact_status)
-        response = supabase.table("calls").update({"contact_status": new_status}).eq("id", mason_id).execute()
 
-        # In the current SDK, response.data will be a list of updated rows (or None/empty)
-        if response.data:
-            # response.data[0] is the updated row
-            return {"status": "success", "updated": True, "row": response.data[0]}
-        else:
-            return {"status": "error", "updated": False, "message": "No rows updated (id not found or no change)"}
-    except Exception as e:
-        print("update_contact_status error:", e)
-        return {"status": "error", "updated": False, "message": str(e)}
+    name_match = re.search(r"(?:name is|I'm|I am)\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)", text)
+    address_match = re.search(r"(?:live at|address is|stay at)\s+(.+?)(?:\.|$)", text)
+    pay_match = re.search(r"(?:pay is|salary is|income is)\s+(\d+)", text)
+
+    name = name_match.group(1).strip() if name_match else "Unknown"
+    address = address_match.group(1).strip() if address_match else "Unknown"
+    pay = pay_match.group(1).strip() if pay_match else "Unknown"
+
+    return name, address, pay
+
+
+# ===============================================================
+# 4. INSERT DATA
+# ===============================================================
+def store_data(name, address, pay, number, contact_status):
+    """
+    Inserts a single record into call_data table.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO call_data (name, address, pay, number, contact_status)
+        VALUES (%s, %s, %s, %s, %s)
+    """, (name, address, pay, number, contact_status))
+    conn.commit()
+    cur.close()
+    conn.close()
+    print("✅ Data inserted successfully.")
+
+
+# ===============================================================
+# 5. MAIN PIPELINE
+# ===============================================================
+def handle_transcription(transcribed_text: str, number: str, contact_status: str):
+    """
+    End-to-end flow: parse → store
+    """
+    name, address, pay = parse_transcription(transcribed_text)
+    print(f"Extracted fields:\n  Name: {name}\n  Address: {address}\n  Pay: {pay}")
+    store_data(name, address, pay, number, contact_status)
+
+
+# ===============================================================
+# 6. TEST EXAMPLE
+# ===============================================================
+if __name__ == "__main__":
+    init_db()
+
+    # Simulated transcription text
+    sample_text = "My name is Alice Brown. I live at 23 Palm Avenue, Chennai. My pay is 45000."
+
+    # Inputs you might get externally or from a form
+    phone_number = input("Enter contact number: ")
+    contact_status = input("Enter contact status (Connected/Missed/Callback): ")
+
+    handle_transcription(sample_text, phone_number, contact_status)

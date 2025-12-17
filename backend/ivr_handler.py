@@ -1,160 +1,22 @@
-from gtts import gTTS
-import tempfile
-import os
-import re
+from enum import Enum
+import time
 
-# Import your database handler
-from backend.database import insert_record
+class IVRQuestion(Enum):
+    NAME = "Please state your full name."
+    LOCATION = "What area or city are you located in?"
+    RATE = "How much do you expect to be paid per hour?"
 
-# In-memory session store
-SESSIONS = {}
+class IVRHandler:
+    def __init__(self):
+        self.questions = [
+            IVRQuestion.NAME,
+            IVRQuestion.LOCATION,
+            IVRQuestion.RATE
+        ]
+        self.pause_duration = 2  # seconds between questions
 
-# Fields you want to collect
-FIELDS = ["name", "age","number", "address", "pay"]
-
-QUESTIONS = {
-    "name": "Please tell me your full name.",
-    "number": "Please tell me your 10-digit phone number.",
-    "address": "Please tell me your full address.",
-    "pay": "What is your monthly salary or pay?",
-    "age": "Please tell me your age."
-}
-
-
-def start_session(session_id: str):
-    """Initialize a new IVR session."""
-    SESSIONS[session_id] = {f: None for f in FIELDS}
-    SESSIONS[session_id]["current_field"] = FIELDS[0]
-    SESSIONS[session_id]["awaiting_confirmation"] = False
-    print(f"[IVR] Session {session_id} started.")
-
-
-def reset_session(session_id: str):
-    if session_id in SESSIONS:
-        del SESSIONS[session_id]
-    print(f"[IVR] Session {session_id} reset.")
-
-
-def synthesize_speech(text: str) -> str:
-    """Generate TTS audio file and return file path."""
-    tts = gTTS(text=text, lang="en")
-    tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-    tts.save(tmp_file.name)
-    return tmp_file.name
-
-
-def process_turn(session_id: str, user_text: str):
-    """Process a user turn with yes/no confirmation."""
-    if session_id not in SESSIONS:
-        start_session(session_id)
-
-    session = SESSIONS[session_id]
-    current_field = session["current_field"]
-
-    print(f"[IVR] User said: '{user_text}'")
-
-    # ──────────────────────────────────────────────
-    # CASE 1: Waiting for YES / NO confirmation
-    # ──────────────────────────────────────────────
-    if session["awaiting_confirmation"]:
-
-        # YES → save & move forward
-        if re.search(r"\b(yes|y)\b", user_text, re.IGNORECASE):
-
-            session["awaiting_confirmation"] = False
-            next_index = FIELDS.index(current_field) + 1
-
-            # More fields remaining?
-            if next_index < len(FIELDS):
-                session["current_field"] = FIELDS[next_index]
-                assistant_text = QUESTIONS[session["current_field"]]
-                finished = False
-
-            else:
-                # FINAL FIELD CONFIRMED — END SESSION
-                assistant_text = (
-                    "All fields collected:\n" +
-                    "\n".join([f"{f}: {session[f]}" for f in FIELDS]) +
-                    "\nThank you!"
-                )
-                finished = True
-
-                
-               
-
-                # Reset after saving
-                reset_session(session_id)
-
-        else:
-            # NO → repeat field question
-            assistant_text = QUESTIONS[current_field]
-            session["awaiting_confirmation"] = False
-            finished = False
-
-    # ──────────────────────────────────────────────
-    # CASE 2: Normal input → save value → ask confirm
-    # ──────────────────────────────────────────────
-    else:
-        # Special processing for phone number
-        if current_field == "number":
-            digits = re.sub(r"\D", "", user_text)
-            if len(digits) < 10:
-                assistant_text = "Please repeat your 10-digit phone number."
-                audio_file = synthesize_speech(assistant_text)
-                return {
-                    "assistant_text": assistant_text,
-                    "finished": False,
-                    "fields": {f: session.get(f) for f in FIELDS},
-                    "audio_file": audio_file
-                }
-            session["number"] = digits
-        # Special processing for age
-        if current_field == "age":
-            digits = re.sub(r"\D", "", user_text)
-            if not digits or not (18 < int(digits) < 120):
-                assistant_text = "I couldn't understand. Please tell me your age as a number."
-                audio_file = synthesize_speech(assistant_text)
-                return {
-                    "assistant_text": assistant_text,
-                    "finished": False,
-                    "fields": {f: session.get(f) for f in FIELDS},
-                    "audio_file": audio_file
-                }
-            session["age"] = digits
-        # specail processing for pay
-        elif current_field == "pay":
-            digits = re.sub(r"\D", "", user_text)
-            if not digits:
-                assistant_text = "I couldn't understand. Please tell me your pay as a number."
-                audio_file = synthesize_speech(assistant_text)
-                return {
-                    "assistant_text": assistant_text,
-                    "finished": False,
-                    "fields": {f: session.get(f) for f in FIELDS},
-                    "audio_file": audio_file
-                }
-            session["pay"] = digits
-
-
-        else:
-            session[current_field] = user_text.strip()
-
-        print(f"[IVR] Stored {current_field}: {session[current_field]}")
-
-        assistant_text = (
-            f"Is this your {current_field}: {session[current_field]}? "
-            "Say yes to confirm, or no to repeat."
-        )
-
-        session["awaiting_confirmation"] = True
-        finished = False
-
-    # Generate TTS output
-    audio_file = synthesize_speech(assistant_text)
-
-    return {
-        "assistant_text": assistant_text,
-        "finished": finished,
-        "fields": {f: session.get(f) for f in FIELDS},
-        "audio_file": audio_file
-    }
+    def get_next_question(self, question_index: int) -> str:
+        if 0 <= question_index < len(self.questions):
+            time.sleep(self.pause_duration)
+            return self.questions[question_index].value
+        return None
