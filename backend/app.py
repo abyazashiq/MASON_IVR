@@ -1,13 +1,22 @@
 from fastapi import FastAPI, File, UploadFile, Depends
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from transcribe_module import transcribe_audio
-from database import get_db, create_mason, get_available_masons, create_ivr_session, update_session_progress, IVRSession
-from ivr_handler import IVRHandler
+from backend.transcribe_module import transcribe_audio
+from backend.database import get_db, create_mason, get_available_masons, create_ivr_session, update_session_progress, IVRSession, init_db
+from backend.ivr_handler import IVRHandler
 import os
-from database import init_db
+import tempfile
+from contextlib import asynccontextmanager
 
-app = FastAPI()
+# Use lifespan for startup/shutdown events (FastAPI modern pattern)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    init_db()
+    yield
+    # Shutdown (if needed)
+
+app = FastAPI(lifespan=lifespan)
 
 # Add CORS middleware
 app.add_middleware(
@@ -18,7 +27,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-UPLOAD_DIR = "uploads"
+# Use /tmp for temporary files on Render (ephemeral filesystem)
+UPLOAD_DIR = "/tmp/uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 ivr_handler = IVRHandler()
@@ -35,12 +45,17 @@ def parse_mason_responses(session):
     except (ValueError, IndexError):
         return {"name": "", "location": "", "rate": 0.0}
 
-@app.on_event("startup")
-async def startup_event():
-    init_db()
+@app.get("/")
+async def root():
+    return {"status": "IVR API is running"}
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
 
 @app.post("/transcribe")
 async def transcribe_endpoint(file: UploadFile = File(...)):
+    file_path = None
     try:
         # Save uploaded file temporarily
         file_path = os.path.join(UPLOAD_DIR, file.filename)
@@ -50,12 +65,16 @@ async def transcribe_endpoint(file: UploadFile = File(...)):
         # Run transcription
         text = transcribe_audio(file_path)
 
-        # Optional: delete file after processing
-        os.remove(file_path)
-
         return {"text": text}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
+    finally:
+        # Clean up file
+        if file_path and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass
 
 @app.get("/get-question/{question_index}")
 async def get_question(question_index: int):
@@ -80,6 +99,7 @@ async def transcribe_with_session(
     file: UploadFile = File(...),
     db=Depends(get_db)
 ):
+    file_path = None
     try:
         file_path = os.path.join(UPLOAD_DIR, file.filename)
         with open(file_path, "wb") as f:
@@ -87,7 +107,6 @@ async def transcribe_with_session(
             f.write(content)
 
         text = transcribe_audio(file_path)
-        os.remove(file_path)
 
         current_session = db.query(IVRSession).filter(IVRSession.id == session_id).first()
         if not current_session:
@@ -109,3 +128,10 @@ async def transcribe_with_session(
         return {"text": text, "completed": session.completed}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
+    finally:
+        # Clean up file
+        if file_path and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass
