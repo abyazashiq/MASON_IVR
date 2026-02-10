@@ -1,12 +1,11 @@
 from fastapi import FastAPI, File, UploadFile, Depends
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from backend.transcribe_module import transcribe_audio
-from backend.database import get_db, create_mason, get_available_masons, create_ivr_session, update_session_progress, IVRSession
-from backend.ivr_handler import IVRHandler
-import imageio_ffmpeg as ffmpeg
+from transcribe_module import transcribe_audio
+from database import get_db, create_mason, get_available_masons, create_ivr_session, update_session_progress, IVRSession
+from ivr_handler import IVRHandler
 import os
-from backend.database import init_db
+from database import init_db
 
 app = FastAPI()
 
