@@ -1,6 +1,6 @@
 """Data handler for IVR session results."""
 
-from backend.database import insert_record
+from database import insert_record
 
 
 def insert_record_handler(fields: dict):

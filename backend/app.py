@@ -6,10 +6,10 @@ import os
 import tempfile
 from pydantic import BaseModel
 
-from backend.transcribe_module import transcribe_audio
-from backend.ivr_handler import process_turn, reset_session
-from backend.data_handler import insert_record_handler
-from backend.database import (
+from transcribe_module import transcribe_audio
+from ivr_handler import process_turn, reset_session
+from data_handler import insert_record_handler
+from database import (
     get_employer_by_id,
     add_employer_profile,
     add_employer_login,
