@@ -3,6 +3,9 @@
 import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
+// Force dynamic rendering - don't prerender this page
+export const dynamic = 'force-dynamic';
+
 export default function HireDashboard() {
   const searchParams = useSearchParams();
   const empId = searchParams.get("emp_id");
