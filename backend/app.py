@@ -11,7 +11,14 @@ from backend.ivr_handler import process_turn, reset_session
 from backend.data_handler import insert_record_handler
 from backend.database import (
     get_employer_by_id,
-    add_employtitle="Mason IVR Backend", version="1.0.0")
+    add_employer_profile,
+    add_employer_login,
+    checklogin,
+    get_masons,
+    update_contact_status,
+)
+
+app = FastAPI(title="Mason IVR Backend", version="1.0.0")
 
 # CORS middleware for frontend
 app.add_middleware(
@@ -34,6 +41,8 @@ class EmployerSignup(BaseModel):
 
 
 # ==================== IVR Endpoints ====================
+@app.post("/ivr")
+async def ivr_endpoint(session_id: str = Form(...), file: UploadFile = File(...)):
     """Process IVR audio input and return assistant response."""
     try:
         # Save temporary audio file
@@ -61,16 +70,10 @@ class EmployerSignup(BaseModel):
         }
 
     except Exception as e:
-            "status": "success",
-            "assistant_text": result["assistant_text"],
-            "finished": result["finished"],
-            "fields": result["fields"],
-            "audio_url": f"/audio/{os.path.basename(result['audio_file'])}"
-        }
+        return {"status": "error", "message": str(e)}
 
-    except Exception as e:
-        print(f"[IVR] Error: {e}")
-  ==================== Audio Endpoint ====================
+
+# ==================== Audio Endpoint ====================
 @app.get("/audio/{file_name}")
 async def get_audio(file_name: str):
     """Serve temporary audio files."""
@@ -86,10 +89,7 @@ async def reset(session_id: str = Form(...)):
     return {"status": "success", "message": "Session reset"}
 
 
-# ==================== Employer Endpoints ====================async def reset(session_id: str = Form(...)):
-    reset_session(session_id)
-    return {"status": "reset"}
-
+# ==================== Employer Endpoints ====================
 @app.post("/employer/login")
 async def employer_login(email: str = Form(...), password: str = Form(...)):
     """Authenticate employer login."""
@@ -141,19 +141,7 @@ def update_mason_status(mason_id: int, payload: dict = Body(...)):
     return update_contact_status(mason_id, new_status)
 
 
-@app.get("/employer/{emp_id}")
-def get_employer_profile(emp_id: str):
-    """Get employer profile by ID."""
-    employer = get_employer_by_id(emp_id)
-    if not employer:
-        return {"name": "", "email": ""}
-    return {"name": employer["name"], "email": employer["email"]}
-
-
-# ------------------------- Run Server -------------------------
+# ==================== Run Server ====================
 if __name__ == "__main__":
-    import os
     port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
-
-# ------------------------- END -------------------------   
+    uvicorn.run(app, host="0.0.0.0", port=port)   
