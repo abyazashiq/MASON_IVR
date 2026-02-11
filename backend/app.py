@@ -45,14 +45,30 @@ class EmployerSignup(BaseModel):
 async def ivr_endpoint(session_id: str = Form(...), file: UploadFile = File(...)):
     """Process IVR audio input and return assistant response."""
     try:
+        print(f"[DEBUG] IVR Request - session_id: {session_id}, file: {file.filename if file else 'None'}")
+        
+        # Validate inputs
+        if not session_id:
+            return {"status": "error", "message": "session_id is required"}
+        if not file:
+            return {"status": "error", "message": "file is required"}
+        
         # Save temporary audio file
         suffix = os.path.splitext(file.filename)[-1] or ".webm"
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp.write(await file.read())
+            content = await file.read()
+            print(f"[DEBUG] File size: {len(content)} bytes")
+            
+            if len(content) == 0:
+                return {"status": "error", "message": "Audio file is empty"}
+            
+            tmp.write(content)
             temp_audio_path = tmp.name
 
         # Transcribe audio
+        print(f"[DEBUG] Transcribing audio from {temp_audio_path}")
         user_text = transcribe_audio(temp_audio_path)
+        print(f"[DEBUG] Transcribed text: {user_text}")
 
         # Process user input through IVR logic
         result = process_turn(session_id, user_text)
@@ -70,6 +86,9 @@ async def ivr_endpoint(session_id: str = Form(...), file: UploadFile = File(...)
         }
 
     except Exception as e:
+        print(f"[ERROR] IVR endpoint error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return {"status": "error", "message": str(e)}
 
 
