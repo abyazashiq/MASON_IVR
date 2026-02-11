@@ -1,24 +1,19 @@
-from fastapi import FastAPI, File, UploadFile, Depends
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, UploadFile, File, Form,Body
 from fastapi.middleware.cors import CORSMiddleware
-from transcribe_module import transcribe_audio
-from database import get_db, create_mason, get_available_masons, create_ivr_session, update_session_progress, IVRSession, init_db
-from ivr_handler import IVRHandler
+from fastapi.responses import FileResponse
+import uvicorn
 import os
 import tempfile
-from contextlib import asynccontextmanager
 
-# Use lifespan for startup/shutdown events (FastAPI modern pattern)
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup
-    init_db()
-    yield
-    # Shutdown (if needed)
+from backend.transcribe_module import transcribe_audio
+from backend.ivr_handler import process_turn, reset_session
+from backend.data_handler import insert_record_handler   # <--- IMPORTANT
+from backend.database import get_employer_by_id, add_employer_profile, add_employer_login, checklogin, get_masons, update_contact_status
+from pydantic import BaseModel
 
 app = FastAPI(lifespan=lifespan)
 
-# Add CORS middleware
+# CORS for frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -27,111 +22,133 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Use /tmp for temporary files on Render (ephemeral filesystem)
-UPLOAD_DIR = "/tmp/uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+# ------------------------- Model for signup -------------------------
+class EmployerSignup(BaseModel):
+    email: str
+    password: str
+    name: str
+    location: str
+    expected_wage: float
 
-ivr_handler = IVRHandler()
 
-def parse_mason_responses(session):
-    responses = session.responses or []
+# ------------------------- IVR -------------------------
+@app.post("/ivr")
+async def ivr_endpoint(session_id: str = Form(...), file: UploadFile = File(...)):
+
     try:
-        rate = float(''.join(filter(str.isdigit, responses[2]))) if len(responses) > 2 else 0.0
+        # Save temp audio upload
+        suffix = os.path.splitext(file.filename)[-1] or ".webm"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(await file.read())
+            temp_audio_path = tmp.name
+
+        print(f"[IVR] Received audio for session: {session_id}")
+        print(f"[IVR] Temp file: {temp_audio_path}")
+
+        # Transcribe user voice
+        user_text = transcribe_audio(temp_audio_path)
+        print(f"[IVR] Transcription: {user_text}")
+
+        # Process the turn (logic in ivr_handler)
+        result = process_turn(session_id, user_text)
+
+        # If all fields are collected, save to database
+        if result["finished"]:
+            print("[IVR] Session finished. Inserting into DB...")
+            insert_record_handler(result["fields"])
+
         return {
-            "name": responses[0] if len(responses) > 0 else "",
-            "location": responses[1] if len(responses) > 1 else "",
-            "rate": rate
+            "status": "success",
+            "assistant_text": result["assistant_text"],
+            "finished": result["finished"],
+            "fields": result["fields"],
+            "audio_url": f"/audio/{os.path.basename(result['audio_file'])}"
         }
-    except (ValueError, IndexError):
-        return {"name": "", "location": "", "rate": 0.0}
 
-@app.get("/")
-async def root():
-    return {"status": "IVR API is running"}
-
-@app.get("/health")
-async def health_check():
-    return {"status": "healthy"}
-
-@app.post("/transcribe")
-async def transcribe_endpoint(file: UploadFile = File(...)):
-    file_path = None
-    try:
-        # Save uploaded file temporarily
-        file_path = os.path.join(UPLOAD_DIR, file.filename)
-        with open(file_path, "wb") as f:
-            f.write(await file.read())
-
-        # Run transcription
-        text = transcribe_audio(file_path)
-
-        return {"text": text}
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
-    finally:
-        # Clean up file
-        if file_path and os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except Exception:
-                pass
+        print(f"[IVR] Error: {e}")
+        return {"status": "error", "message": str(e)}
 
-@app.get("/get-question/{question_index}")
-async def get_question(question_index: int):
-    question = ivr_handler.get_next_question(question_index)
-    if question:
-        return {"question": question}
-    return JSONResponse(status_code=404, content={"error": "No more questions"})
 
-@app.get("/available-masons")
-async def get_masons(db=Depends(get_db)):
-    masons = get_available_masons(db)
-    return [{"id": m.id, "name": m.name, "location": m.location, "rate": m.expected_rate} for m in masons]
+# ------------------------- Serve audio -------------------------
+@app.get("/audio/{file_name}")
+async def get_audio(file_name: str):
+    file_path = os.path.join(tempfile.gettempdir(), file_name)
+    return FileResponse(file_path, media_type="audio/mpeg")
 
-@app.post("/start-session")
-async def start_session(db=Depends(get_db)):
-    session = create_ivr_session(db)
-    return {"session_id": session.id}
 
-@app.post("/transcribe/{session_id}")
-async def transcribe_with_session(
-    session_id: int,
-    file: UploadFile = File(...),
-    db=Depends(get_db)
-):
-    file_path = None
-    try:
-        file_path = os.path.join(UPLOAD_DIR, file.filename)
-        with open(file_path, "wb") as f:
-            content = await file.read()
-            f.write(content)
+# ------------------------- Reset Session -------------------------
+@app.post("/reset")
+async def reset(session_id: str = Form(...)):
+    reset_session(session_id)
+    return {"status": "reset"}
 
-        text = transcribe_audio(file_path)
+@app.post("/employer/login")
+async def employer_login(email: str = Form(...), password: str = Form(...)):
+    
+    # TODO: Replace with database validation
+    user = checklogin(email, password)
+    if user:
+        print(user)
+        return {"status": "success", "verified": True, "employer": user}    
+    return {"status": "failed", "verified": False}
 
-        current_session = db.query(IVRSession).filter(IVRSession.id == session_id).first()
-        if not current_session:
-            return JSONResponse(status_code=404, content={"error": "Session not found"})
+@app.get("/employer/{emp_id}/masons")
+def get_masons_for_employer(emp_id: str):
+    """
+    Returns the full mason table for the employer.
+    Currently fetching all masons; can be filtered later by employer if needed.
+    """
+    masons = get_masons()  # fetch all masons
+    return {"masons": masons}
 
-        session = update_session_progress(db, session_id, current_session.question_index + 1, text)
-        
-        if session.completed:
-            parsed_data = parse_mason_responses(session)
-            try:
-                create_mason(db, 
-                    name=parsed_data["name"],
-                    location=parsed_data["location"],
-                    expected_rate=parsed_data["rate"]
-                )
-            except Exception as e:
-                return JSONResponse(status_code=400, content={"error": f"Failed to create mason: {str(e)}"})
 
-        return {"text": text, "completed": session.completed}
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
-    finally:
-        # Clean up file
-        if file_path and os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except Exception:
-                pass
+@app.put("/masons/{mason_id}/status")
+def update_mason_status(mason_id: int, payload: dict = Body(...)):
+    """
+    Expects JSON body: { "contact_status": "Contacted" }
+    Returns: { "status": "...", "updated": true/false, ... }
+    """
+    new_status = payload.get("contact_status")
+    if not new_status:
+        return {"status": "error", "updated": False, "message": "contact_status is required"}
+
+    result = update_contact_status(mason_id, new_status)
+    # result already contains 'updated' boolean
+    return result
+
+
+
+@app.post("/employer/signup")
+async def employer_signup(signup: EmployerSignup):
+    # Step 1: Add employer login (email + password)
+    data = add_employer_login(signup.email, signup.password)
+    emp_id = data[1]  # returned from add_employer_login
+
+    # Step 2: Add employer profile (name + location + wage)
+    add_employer_profile(emp_id, signup.name, signup.location, signup.expected_wage)
+
+    return {"status": "success", "message": "Employer signed up successfully."}
+
+
+@app.get("/employer/{emp_id}")
+def get_employer_profile(emp_id: str):
+    employer = get_employer_by_id(emp_id)
+    if not employer:
+        return {"name": "", "email": ""}
+    return {"name": employer["name"], "email": employer["email"]}
+from fastapi import FastAPI
+
+
+
+@app.post("/ivr/save")
+async def save(data: dict):
+    print("Received:", data)
+    return {"ok": True}
+
+
+# ------------------------- Run Server -------------------------
+if __name__ == "__main__":
+    uvicorn.run(app, host="127.0.0.1", port=8000)
+
+# ------------------------- END -------------------------   
