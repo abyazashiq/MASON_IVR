@@ -3,15 +3,13 @@ import tempfile
 import os
 import re
 
-# Import your database handler
-from backend.database import insert_record
-
 # In-memory session store
 SESSIONS = {}
 
-# Fields you want to collect
-FIELDS = ["name", "age","number", "address", "pay"]
+# Fields to collect from user
+FIELDS = ["name", "age", "number", "address", "pay"]
 
+# Prompts for each field
 QUESTIONS = {
     "name": "Please tell me your full name.",
     "number": "Please tell me your 10-digit phone number.",
@@ -26,17 +24,16 @@ def start_session(session_id: str):
     SESSIONS[session_id] = {f: None for f in FIELDS}
     SESSIONS[session_id]["current_field"] = FIELDS[0]
     SESSIONS[session_id]["awaiting_confirmation"] = False
-    print(f"[IVR] Session {session_id} started.")
 
 
 def reset_session(session_id: str):
+    """Reset and clear a session."""
     if session_id in SESSIONS:
         del SESSIONS[session_id]
-    print(f"[IVR] Session {session_id} reset.")
 
 
 def synthesize_speech(text: str) -> str:
-    """Generate TTS audio file and return file path."""
+    """Generate TTS audio file using gTTS and return file path."""
     tts = gTTS(text=text, lang="en")
     tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
     tts.save(tmp_file.name)
@@ -52,50 +49,35 @@ def process_turn(session_id: str, user_text: str):
     current_field = session["current_field"]
 
     print(f"[IVR] User said: '{user_text}'")
-
-    # ──────────────────────────────────────────────
-    # CASE 1: Waiting for YES / NO confirmation
-    # ──────────────────────────────────────────────
+# CASE 1: Waiting for YES/NO confirmation
     if session["awaiting_confirmation"]:
-
-        # YES → save & move forward
         if re.search(r"\b(yes|y)\b", user_text, re.IGNORECASE):
-
+            # User confirmed - move to next field
             session["awaiting_confirmation"] = False
             next_index = FIELDS.index(current_field) + 1
 
-            # More fields remaining?
             if next_index < len(FIELDS):
                 session["current_field"] = FIELDS[next_index]
                 assistant_text = QUESTIONS[session["current_field"]]
                 finished = False
-
             else:
-                # FINAL FIELD CONFIRMED — END SESSION
+                # All fields collected
                 assistant_text = (
                     "All fields collected:\n" +
                     "\n".join([f"{f}: {session[f]}" for f in FIELDS]) +
                     "\nThank you!"
                 )
                 finished = True
-
-                
-               
-
-                # Reset after saving
                 reset_session(session_id)
-
         else:
-            # NO → repeat field question
+            # User said no - repeat field question
             assistant_text = QUESTIONS[current_field]
             session["awaiting_confirmation"] = False
             finished = False
 
-    # ──────────────────────────────────────────────
-    # CASE 2: Normal input → save value → ask confirm
-    # ──────────────────────────────────────────────
+    # CASE 2: Normal input - save value and ask for confirmation
     else:
-        # Special processing for phone number
+        # Special validation for phone number
         if current_field == "number":
             digits = re.sub(r"\D", "", user_text)
             if len(digits) < 10:
@@ -108,8 +90,9 @@ def process_turn(session_id: str, user_text: str):
                     "audio_file": audio_file
                 }
             session["number"] = digits
-        # Special processing for age
-        if current_field == "age":
+
+        # Special validation for age
+        elif current_field == "age":
             digits = re.sub(r"\D", "", user_text)
             if not digits or not (18 < int(digits) < 120):
                 assistant_text = "I couldn't understand. Please tell me your age as a number."
@@ -121,7 +104,8 @@ def process_turn(session_id: str, user_text: str):
                     "audio_file": audio_file
                 }
             session["age"] = digits
-        # specail processing for pay
+
+        # Special validation for pay
         elif current_field == "pay":
             digits = re.sub(r"\D", "", user_text)
             if not digits:
@@ -135,17 +119,14 @@ def process_turn(session_id: str, user_text: str):
                 }
             session["pay"] = digits
 
-
         else:
             session[current_field] = user_text.strip()
 
-        print(f"[IVR] Stored {current_field}: {session[current_field]}")
-
+        # Ask for confirmation
         assistant_text = (
             f"Is this your {current_field}: {session[current_field]}? "
             "Say yes to confirm, or no to repeat."
         )
-
         session["awaiting_confirmation"] = True
         finished = False
 

@@ -1,5 +1,23 @@
-from database import insert_record 
+"""Data handler for IVR session results."""
 
-def insert_record_handler(l):
-    insert_record(name=l.get("name",None), number=l.get("number",None), address=l.get("address",None), pay=l.get("pay",None),age= l.get("age",None), contact_status=l.get("contact_status","Pending"), transcription=l.get("name",None)+"," +l.get("number",None)+","+ l.get("address",None)+","+ l.get("pay",None)+","+ l.get("age",None))
+from backend.database import insert_record
+
+
+def insert_record_handler(fields: dict):
+    """Insert collected IVR fields into database."""
+    insert_record(
+        name=fields.get("name"),
+        number=fields.get("number"),
+        address=fields.get("address"),
+        pay=fields.get("pay"),
+        age=fields.get("age"),
+        contact_status=fields.get("contact_status", "Pending"),
+        transcription=",".join([
+            str(fields.get("name", "")).strip(),
+            str(fields.get("number", "")).strip(),
+            str(fields.get("address", "")).strip(),
+            str(fields.get("pay", "")).strip(),
+            str(fields.get("age", "")).strip()
+        ])
+    )
 
