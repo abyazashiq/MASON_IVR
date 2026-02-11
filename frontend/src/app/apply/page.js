@@ -27,29 +27,35 @@ export default function Apply() {
     try {
       setError("");
       setLoading(true);
+      
+      // Create session ID
       const sid = crypto.randomUUID();
+      console.log("[DEBUG] Created session ID:", sid);
       setSessionId(sid);
-      setRetryCount(0);
 
       // Test backend connection first
       try {
         const testRes = await fetch(`${BACKEND_URL}/health`, { method: "GET" });
+        console.log("[DEBUG] Health check:", testRes.status);
         if (!testRes.ok) {
           throw new Error("Backend health check failed");
         }
-      } catch {
-        // Health endpoint might not exist, continue with reset
+      } catch (err) {
+        console.warn("[WARN] Health check failed:", err.message);
+        // Continue anyway - endpoint might not exist
       }
 
+      // Reset session on backend
       const formData = new FormData();
       formData.append("session_id", sid);
       
+      console.log("[DEBUG] Sending reset request with session_id:", sid);
       const response = await fetch(`${BACKEND_URL}/reset`, { 
         method: "POST", 
-        body: formData,
-        timeout: 10000
+        body: formData
       });
 
+      console.log("[DEBUG] Reset response:", response.status);
       if (!response.ok) {
         throw new Error(`Backend error: ${response.status} - ${response.statusText}`);
       }
@@ -59,13 +65,14 @@ export default function Apply() {
       setLoading(false);
 
       setTimeout(() => {
+        console.log("[DEBUG] Starting recording with session_id:", sid);
         setAssistantText("Starting application. Please speak after the tone.");
         startRecording();
       }, 1000);
     } catch (err) {
       setLoading(false);
       setError(`Failed to start: ${err.message}. Please check your connection and try again.`);
-      console.error(err);
+      console.error("[ERROR] Start failed:", err);
     }
   };
 
@@ -131,6 +138,13 @@ export default function Apply() {
   const sendAudioToBackend = async () => {
     if (finished) return;
 
+    // Validate sessionId exists
+    if (!sessionId || sessionId.trim() === "") {
+      setError("Session not initialized. Please restart the application.");
+      setRecording(false);
+      return;
+    }
+
     try {
       setLoading(true);
       const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
@@ -145,7 +159,7 @@ export default function Apply() {
 
       console.log("[DEBUG] Sending to backend:", {
         url: `${BACKEND_URL}/ivr`,
-        sessionId,
+        sessionId: sessionId,
         audioSize: audioBlob.size,
         audioType: audioBlob.type
       });
@@ -166,7 +180,7 @@ export default function Apply() {
           if (errorData.detail) {
             errorMsg = errorData.detail;
             if (Array.isArray(errorData.detail)) {
-              errorMsg = errorData.detail.map(d => `${d.loc}: ${d.msg}`).join(", ");
+              errorMsg = errorData.detail.map(d => `${d.loc.join(".")}: ${d.msg}`).join(", ");
             }
           }
         } catch (e) {
@@ -202,6 +216,7 @@ export default function Apply() {
       }
     } catch (err) {
       setLoading(false);
+      setRecording(false);
       setError(`Error: ${err.message}`);
       console.error("[ERROR]", err);
       
