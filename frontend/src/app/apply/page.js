@@ -18,6 +18,7 @@ export default function Apply() {
   const [retryCount, setRetryCount] = useState(0);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
+  const sessionIdRef = useRef(""); // Add ref for guaranteed session ID
   const router = useRouter();
 
   const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000";
@@ -28,10 +29,11 @@ export default function Apply() {
       setError("");
       setLoading(true);
       
-      // Create session ID
+      // Create session ID and store in both state and ref
       const sid = crypto.randomUUID();
       console.log("[DEBUG] Created session ID:", sid);
       setSessionId(sid);
+      sessionIdRef.current = sid; // Store in ref for guaranteed access
 
       // Test backend connection first
       try {
@@ -65,7 +67,7 @@ export default function Apply() {
       setLoading(false);
 
       setTimeout(() => {
-        console.log("[DEBUG] Starting recording with session_id:", sid);
+        console.log("[DEBUG] Starting recording with session_id ref:", sessionIdRef.current);
         setAssistantText("Starting application. Please speak after the tone.");
         startRecording();
       }, 1000);
@@ -138,10 +140,13 @@ export default function Apply() {
   const sendAudioToBackend = async () => {
     if (finished) return;
 
-    // Validate sessionId exists
-    if (!sessionId || sessionId.trim() === "") {
+    // Use ref for guaranteed session ID access (state might not be updated yet)
+    const currentSessionId = sessionIdRef.current;
+    
+    if (!currentSessionId || currentSessionId.trim() === "") {
       setError("Session not initialized. Please restart the application.");
       setRecording(false);
+      console.error("[ERROR] Session ID is empty:", currentSessionId);
       return;
     }
 
@@ -154,12 +159,12 @@ export default function Apply() {
       }
 
       const formData = new FormData();
-      formData.append("session_id", sessionId);
+      formData.append("session_id", currentSessionId);
       formData.append("file", audioBlob, "audio.webm");
 
       console.log("[DEBUG] Sending to backend:", {
         url: `${BACKEND_URL}/ivr`,
-        sessionId: sessionId,
+        sessionId: currentSessionId,
         audioSize: audioBlob.size,
         audioType: audioBlob.type
       });
