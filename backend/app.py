@@ -30,6 +30,13 @@ app.add_middleware(
 )
 
 
+# ==================== Health Check ====================
+@app.get("/health")
+async def health():
+    """Health check endpoint."""
+    return {"status": "ok", "service": "Mason IVR Backend"}
+
+
 # ==================== Models ====================
 class EmployerSignup(BaseModel):
     """Request model for employer signup."""

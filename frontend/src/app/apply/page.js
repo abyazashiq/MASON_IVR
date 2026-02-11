@@ -143,23 +143,39 @@ export default function Apply() {
       formData.append("session_id", sessionId);
       formData.append("file", audioBlob, "audio.webm");
 
-      const res = await fetch(`${BACKEND_URL}/ivr`, {
-        method: "POST",
-        body: formData,
-        timeout: 30000
+      console.log("[DEBUG] Sending to backend:", {
+        url: `${BACKEND_URL}/ivr`,
+        sessionId,
+        audioSize: audioBlob.size,
+        audioType: audioBlob.type
       });
 
+      const res = await fetch(`${BACKEND_URL}/ivr`, {
+        method: "POST",
+        body: formData
+      });
+
+      console.log("[DEBUG] Response status:", res.status);
+      const responseText = await res.text();
+      console.log("[DEBUG] Response body:", responseText);
+
       if (!res.ok) {
-        if (res.status === 500 && retryCount < MAX_RETRIES) {
-          setRetryCount(retryCount + 1);
-          setAssistantText(`Retrying... (${retryCount + 1}/${MAX_RETRIES})`);
-          setTimeout(() => startRecording(), 1000);
-          return;
+        let errorMsg = `Backend error: ${res.status}`;
+        try {
+          const errorData = JSON.parse(responseText);
+          if (errorData.detail) {
+            errorMsg = errorData.detail;
+            if (Array.isArray(errorData.detail)) {
+              errorMsg = errorData.detail.map(d => `${d.loc}: ${d.msg}`).join(", ");
+            }
+          }
+        } catch (e) {
+          errorMsg = responseText || errorMsg;
         }
-        throw new Error(`Backend error: ${res.status} - ${res.statusText}`);
+        throw new Error(errorMsg);
       }
 
-      const json = await res.json();
+      const json = JSON.parse(responseText);
 
       if (!json || !json.assistant_text) {
         throw new Error("Invalid response from backend");
@@ -187,7 +203,7 @@ export default function Apply() {
     } catch (err) {
       setLoading(false);
       setError(`Error: ${err.message}`);
-      console.error(err);
+      console.error("[ERROR]", err);
       
       if (retryCount < MAX_RETRIES) {
         setTimeout(() => {
