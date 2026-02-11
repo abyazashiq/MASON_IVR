@@ -14,38 +14,57 @@ export default function Apply() {
   const [fields, setFields] = useState({});
   const [finished, setFinished] = useState(false);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const router = useRouter();
 
   const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000";
+  const MAX_RETRIES = 3;
 
   const handleStart = async () => {
     try {
       setError("");
+      setLoading(true);
       const sid = crypto.randomUUID();
       setSessionId(sid);
+      setRetryCount(0);
+
+      // Test backend connection first
+      try {
+        const testRes = await fetch(`${BACKEND_URL}/health`, { method: "GET" });
+        if (!testRes.ok) {
+          throw new Error("Backend health check failed");
+        }
+      } catch {
+        // Health endpoint might not exist, continue with reset
+      }
 
       const formData = new FormData();
       formData.append("session_id", sid);
       
       const response = await fetch(`${BACKEND_URL}/reset`, { 
         method: "POST", 
-        body: formData 
+        body: formData,
+        timeout: 10000
       });
 
       if (!response.ok) {
-        throw new Error(`Backend error: ${response.status}`);
+        throw new Error(`Backend error: ${response.status} - ${response.statusText}`);
       }
 
       setStarted(true);
-      setAssistantText("Starting IVR... Please speak after the tone.");
+      setAssistantText("Initializing... Please wait.");
+      setLoading(false);
 
       setTimeout(() => {
+        setAssistantText("Starting application. Please speak after the tone.");
         startRecording();
-      }, 1500);
+      }, 1000);
     } catch (err) {
-      setError(`Failed to start IVR: ${err.message}`);
+      setLoading(false);
+      setError(`Failed to start: ${err.message}. Please check your connection and try again.`);
       console.error(err);
     }
   };
@@ -53,34 +72,73 @@ export default function Apply() {
   const startRecording = async () => {
     try {
       if (finished) return;
+      
+      // Request microphone permission
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+      
       setRecording(true);
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      setError("");
       mediaRecorderRef.current = new MediaRecorder(stream);
 
       audioChunksRef.current = [];
-      mediaRecorderRef.current.ondataavailable = (e) => audioChunksRef.current.push(e.data);
+      mediaRecorderRef.current.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      mediaRecorderRef.current.onerror = (event) => {
+        setError(`Recording error: ${event.error}`);
+        setRecording(false);
+      };
 
       mediaRecorderRef.current.onstop = () => {
-        if (!finished) sendAudioToBackend();
+        if (!finished && audioChunksRef.current.length > 0) {
+          sendAudioToBackend();
+        } else if (audioChunksRef.current.length === 0) {
+          setError("No audio recorded. Please try again.");
+          setRecording(false);
+        }
       };
 
       mediaRecorderRef.current.start();
     } catch (err) {
-      setError(`Microphone access denied: ${err.message}`);
+      setRecording(false);
+      if (err.name === "NotAllowedError") {
+        setError("Microphone permission denied. Please enable microphone access in your browser settings.");
+      } else if (err.name === "NotFoundError") {
+        setError("No microphone found. Please connect a microphone and try again.");
+      } else {
+        setError(`Microphone error: ${err.message}`);
+      }
       console.error(err);
     }
   };
 
   const stopRecording = () => {
     setRecording(false);
-    mediaRecorderRef.current?.stop();
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+    }
   };
 
   const sendAudioToBackend = async () => {
     if (finished) return;
 
     try {
+      setLoading(true);
       const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+      
+      if (audioBlob.size === 0) {
+        throw new Error("Audio blob is empty");
+      }
+
       const formData = new FormData();
       formData.append("session_id", sessionId);
       formData.append("file", audioBlob, "audio.webm");
@@ -88,28 +146,57 @@ export default function Apply() {
       const res = await fetch(`${BACKEND_URL}/ivr`, {
         method: "POST",
         body: formData,
+        timeout: 30000
       });
 
       if (!res.ok) {
-        throw new Error(`Backend error: ${res.status}`);
+        if (res.status === 500 && retryCount < MAX_RETRIES) {
+          setRetryCount(retryCount + 1);
+          setAssistantText(`Retrying... (${retryCount + 1}/${MAX_RETRIES})`);
+          setTimeout(() => startRecording(), 1000);
+          return;
+        }
+        throw new Error(`Backend error: ${res.status} - ${res.statusText}`);
       }
 
       const json = await res.json();
 
+      if (!json || !json.assistant_text) {
+        throw new Error("Invalid response from backend");
+      }
+
       setAssistantText(json.assistant_text);
-      setFields(json.fields);
-      setFinished(json.finished);
+      setFields(json.fields || {});
+      setFinished(json.finished || false);
+      setRetryCount(0);
+      setLoading(false);
 
       if (json.audio_url) {
-        new Audio(`${BACKEND_URL}${json.audio_url}`).play();
+        try {
+          const audio = new Audio(`${BACKEND_URL}${json.audio_url}`);
+          audio.onerror = () => console.warn("Failed to load audio");
+          audio.play().catch(err => console.warn("Audio playback failed:", err));
+        } catch (err) {
+          console.warn("Audio playback error:", err);
+        }
       }
 
       if (!json.finished) {
         setTimeout(() => startRecording(), 1500);
       }
     } catch (err) {
-      setError(`Error processing audio: ${err.message}`);
+      setLoading(false);
+      setError(`Error: ${err.message}`);
       console.error(err);
+      
+      if (retryCount < MAX_RETRIES) {
+        setTimeout(() => {
+          if (confirm("Error processing audio. Retry?")) {
+            setRetryCount(retryCount + 1);
+            startRecording();
+          }
+        }, 1000);
+      }
     }
   };
 
@@ -126,7 +213,8 @@ export default function Apply() {
       {/* Back Button */}
       <button
         onClick={() => router.push("/")}
-        className="absolute top-4 left-4 px-4 py-2 bg-gray-200 text-gray-900 rounded-lg shadow-lg hover:bg-gray-300 transition font-medium"
+        className="absolute top-4 left-4 px-4 py-2 bg-gray-200 text-gray-900 rounded-lg shadow-lg hover:bg-gray-300 transition font-medium disabled:opacity-50"
+        disabled={loading}
       >
         ← Back Home
       </button>
@@ -138,8 +226,8 @@ export default function Apply() {
         </h1>
 
         {error && (
-          <div className="mb-6 p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg">
-            <p className="font-medium">Error: {error}</p>
+          <div className="mb-6 p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg animate-in">
+            <p className="font-medium">⚠️ {error}</p>
             <button
               onClick={() => setError("")}
               className="mt-2 text-sm underline hover:no-underline"
@@ -149,43 +237,61 @@ export default function Apply() {
           </div>
         )}
 
+        {loading && (
+          <div className="mb-6 p-4 bg-blue-100 border border-blue-400 text-blue-700 rounded-lg">
+            <p className="font-medium">⏳ {assistantText || "Processing..."}</p>
+          </div>
+        )}
+
         {!started && (
           <div className="flex flex-col items-center gap-4">
             <p className="text-center text-gray-700 mb-4">
-              Click the button below to start your application. You'll be guided through a voice-based interview.
+              Welcome! Click below to start your application. You'll participate in a voice-based interview guided by our AI system.
+            </p>
+            <p className="text-sm text-gray-600 text-center">
+              ✓ Make sure your microphone is enabled<br/>
+              ✓ Find a quiet space<br/>
+              ✓ Speak clearly when prompted
             </p>
             <button
-              className="px-6 py-3 text-lg bg-green-500 text-white rounded-xl shadow hover:bg-green-600 transition font-medium"
+              className="px-6 py-3 text-lg bg-green-500 text-white rounded-xl shadow hover:bg-green-600 transition font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               onClick={handleStart}
+              disabled={loading}
             >
-              Start Application
+              {loading ? "Initializing..." : "Start Application"}
             </button>
           </div>
         )}
 
         {started && (
           <>
-            <p className="text-lg text-gray-900 bg-white/90 p-4 rounded-xl border mb-6 shadow-inner font-medium">
-              <b>System:</b> {assistantText}
+            <p className="text-lg text-gray-900 bg-white/90 p-4 rounded-xl border mb-6 shadow-inner font-medium min-h-24 flex items-center">
+              <b>System:</b> <span className="ml-2">{assistantText}</span>
             </p>
 
             {!finished && (
-              <div className="flex justify-center mb-6">
+              <div className="flex flex-col items-center gap-4 mb-6">
                 <button
                   onClick={recording ? stopRecording : startRecording}
-                  className={`px-6 py-3 text-lg rounded-xl shadow transition font-medium
-                    ${recording ? "bg-red-500 hover:bg-red-600" : "bg-blue-500 hover:bg-blue-600"}
+                  disabled={loading}
+                  className={`px-8 py-4 text-lg rounded-xl shadow transition font-medium disabled:opacity-50 disabled:cursor-not-allowed
+                    ${recording ? "bg-red-500 hover:bg-red-600 animate-pulse" : "bg-blue-500 hover:bg-blue-600"}
                     text-white`}
                 >
-                  {recording ? "Stop Recording" : "Speak"}
+                  {loading ? "Processing..." : recording ? "⏹ Stop Recording" : "🎤 Speak Now"}
                 </button>
+                {recording && (
+                  <p className="text-sm text-gray-600 animate-bounce">
+                    🔴 Recording in progress...
+                  </p>
+                )}
               </div>
             )}
 
             {finished && (
               <div className="text-center bg-green-50 border border-green-300 p-6 rounded-xl shadow-inner font-medium">
-                <h3 className="text-2xl font-semibold text-green-700">Application Submitted!</h3>
-                <p className="mt-2 text-gray-700">Your application has been saved and will be reviewed soon.</p>
+                <h3 className="text-2xl font-semibold text-green-700">✓ Application Submitted!</h3>
+                <p className="mt-2 text-gray-700">Your application has been saved and will be reviewed by our team soon.</p>
                 <button
                   onClick={() => router.push("/")}
                   className="mt-4 px-5 py-2 bg-green-500 text-white rounded-lg shadow hover:bg-green-600 transition font-medium"
@@ -195,16 +301,16 @@ export default function Apply() {
               </div>
             )}
 
-            {Object.keys(fields).length > 0 && (
+            {Object.keys(fields).length > 0 && !finished && (
               <div className="mt-8">
                 <h3 className="text-xl font-semibold mb-4 text-gray-900 drop-shadow-sm">
-                  Your Information
+                  Collected Information
                 </h3>
-                <div className="bg-gray-900 text-green-300 p-4 rounded-xl shadow-inner font-medium">
+                <div className="bg-gray-900 text-green-300 p-4 rounded-xl shadow-inner font-mono text-sm">
                   <ul className="space-y-2">
                     {Object.entries(fields).map(([key, value]) => (
                       <li key={key} className="flex justify-between border-b border-green-700/30 pb-1 last:border-b-0">
-                        <span className="font-semibold">{key.replaceAll("_", " ")}:</span>
+                        <span className="font-semibold text-green-400">{key.replaceAll("_", " ")}:</span>
                         <span className="text-gray-100">{value}</span>
                       </li>
                     ))}
@@ -245,3 +351,4 @@ export default function Apply() {
     </div>
   );
 }
+
