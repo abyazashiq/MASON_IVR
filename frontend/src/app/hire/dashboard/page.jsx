@@ -1,12 +1,9 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 
-// Force dynamic rendering - don't prerender this page
-export const dynamic = 'force-dynamic';
-
-export default function HireDashboard() {
+function DashboardContent() {
   const searchParams = useSearchParams();
   const empId = searchParams.get("emp_id");
 
@@ -224,5 +221,13 @@ useEffect(() => {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function HireDashboard() {
+  return (
+    <Suspense fallback={<div className="p-8">Loading dashboard...</div>}>
+      <DashboardContent />
+    </Suspense>
   );
 }
