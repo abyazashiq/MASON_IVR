@@ -18,7 +18,7 @@ export default function HireLoginPage() {
     formData.append("password", password);
 
     try {
-      const res = await fetch("http://127.0.0.1:8000/employer/login", {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000"}/employer/login`, {
         method: "POST",
         body: formData,
       });

@@ -25,12 +25,14 @@ export default function HireDashboard() {
   useEffect(() => {
     if (!empId) return;
 
+    const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000";
+
     const fetchDashboard = async () => {
       try {
-        const empRes = await fetch(`http://127.0.0.1:8000/employer/${empId}`);
+        const empRes = await fetch(`${BACKEND_URL}/employer/${empId}`);
         const empData = await empRes.json();
 
-        const masonRes = await fetch(`http://127.0.0.1:8000/employer/${empId}/masons`);
+        const masonRes = await fetch(`${BACKEND_URL}/employer/${empId}/masons`);
         const masonData = await masonRes.json();
 
         setEmployer({
@@ -76,7 +78,8 @@ useEffect(() => {
 }, [filters, masons]);
 
   const updateStatus = (id, status) => {
-    fetch(`http://127.0.0.1:8000/masons/${id}/status`, {
+    const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000";
+    fetch(`${BACKEND_URL}/masons/${id}/status`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ contact_status: status }),
